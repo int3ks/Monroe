@@ -85,3 +85,4 @@ See the `LICENSE` file for full details.
 
 Contributions are welcome as long as they comply with the license.  
 For major changes, please open an issue first to discuss the proposed modification.
+
