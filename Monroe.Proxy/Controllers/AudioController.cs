@@ -1,17 +1,11 @@
 ﻿using Microsoft.AspNetCore.Mvc;
+using Monroe.Config;
 using Monroe.Services;
+using System.Buffers.Text;
 
 [ApiController]
 [Route("v1/audio")]
-public class AudioController : ControllerBase {
-    private readonly IHttpClientFactory _factory;
-    private readonly ModelRouter _router;
-
-    public AudioController(IHttpClientFactory factory, ModelRouter router) {
-        _factory = factory;
-        _router = router;
-    }
-
+public class AudioController (IConfiguration config, IHttpClientFactory factory, List<ModelConfig> models) : ControllerBase {
 
     [HttpPost("transcriptions")]
     public async Task<IActionResult> Transcriptions() {
@@ -19,14 +13,18 @@ public class AudioController : ControllerBase {
         var form = await Request.ReadFormAsync();
 
         // Modell extrahieren (falls vorhanden)
-        string model = form.TryGetValue("model", out var m)
+        string modelName = form.TryGetValue("model", out var m)
             ? m.ToString()
             : "";
 
-        // Routing-Entscheidung (du kannst später Regeln für Audio einbauen)
-        string backend = _router.RouteFromModel(model);
+        // Modell suchen (fallback: erstes Audio-fähiges Modell)
+        var model = models.FirstOrDefault(x =>
+            x.Type.Equals(modelName, StringComparison.OrdinalIgnoreCase)
+        ) ?? models.FirstOrDefault(x => x.Type == "audio")
+          ?? models.First(); // letzter Fallback
 
-        var client = _factory.CreateClient("backend");
+        // HTTP-Client für Backend
+        var client = factory.CreateClient("backend");
 
         // Multipart 1:1 weiterleiten
         using var content = new MultipartFormDataContent();
@@ -40,10 +38,15 @@ public class AudioController : ControllerBase {
             content.Add(fileContent, file.Name, file.FileName);
         }
 
-        var response = await client.PostAsync(backend + "/v1/audio/transcriptions", content, HttpContext.RequestAborted);
+        // Anfrage an das Modell weiterleiten
+        var response = await client.PostAsync(
+            $"{config["BaseUrl"]}{model.Port}/v1/audio/transcriptions",
+            content,
+            HttpContext.RequestAborted
+        );
+
         var bytes = await response.Content.ReadAsByteArrayAsync(HttpContext.RequestAborted);
 
         return File(bytes, response.Content.Headers.ContentType?.ToString() ?? "application/json");
     }
-
 }

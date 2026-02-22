@@ -4,22 +4,15 @@ using System.Text.Json;
 
 [ApiController]
 [Route("v1/images")]
-public class ImagesController : ControllerBase {
-    private readonly LlamaForwarder _forwarder;
-    private readonly ModelRouter _router;
-
-    public ImagesController(LlamaForwarder forwarder, ModelRouter router) {
-        _forwarder = forwarder;
-        _router = router;
-    }
-
+public class ImagesController(IConfiguration config, LlamaForwarder forwarder, ModelRouter router) : ControllerBase {
+   
 
     [HttpPost("generations")]
     public async Task<IActionResult> Generations([FromBody] JsonElement payload) {
-        string backend = _router.Route(payload);
+        var backend = await router.RouteAsync(payload);
 
         // Images sind IMMER non-streaming im OpenAI-Standard
-        return await _forwarder.ForwardAsync(backend + "/v1/images/generations", payload);
+        return await forwarder.ForwardAsync($"{config["BaseUrl"]}:{backend.Port}/v1/images/generations", payload);
 
 
     }
