@@ -2,13 +2,15 @@
 
 [ApiController]
 [Route("v1/models")]
-public class ModelsController : ControllerBase {
+public class ModelsController (IConfiguration config): ControllerBase {
     [HttpGet]
     public IActionResult GetModels() {
+        var ModelName = config["ModelName"] ?? "M.O.N.R.O.E";
+
         return Ok(new {
             data = new[]
             {
-                new { id = "M.O.N.R.O.E", @object = "model" ,
+                new { id = ModelName, @object = "model" ,
                 capabilities = new
                     {
                         chat = true,

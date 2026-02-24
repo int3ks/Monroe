@@ -40,7 +40,7 @@ public class AudioController (IConfiguration config, IHttpClientFactory factory,
 
         // Anfrage an das Modell weiterleiten
         var response = await client.PostAsync(
-            $"{config["BaseUrl"]}{model.Port}/v1/audio/transcriptions",
+            $"{model.ApiUrl(config["BaseUrl"]!)}/v1/audio/transcriptions",
             content,
             HttpContext.RequestAborted
         );

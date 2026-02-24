@@ -3,6 +3,104 @@ using System.Text.Json.Nodes;
 
 namespace Monroe.Proxy.Helper {
     public class PayloadTools {
+        public static bool IsPayloadTooLarge(JsonElement payload, int maxContextTokens, int safetyMargin = 128) {
+            if (!payload.TryGetProperty("messages", out var messagesElement))
+                return false;
+
+            int totalTokens = 0;
+
+            foreach (var msg in messagesElement.EnumerateArray()) {
+                string content = ExtractContent(msg);
+                totalTokens += CountTokens(content);
+            }
+
+            return totalTokens > (maxContextTokens - safetyMargin);
+        }
+
+        public static JsonElement TrimPayloadToContext(JsonElement payload, int maxContextTokens, int safetyMargin = 128) {
+            if (!payload.TryGetProperty("messages", out var messagesElement))
+                return payload;
+
+            var messages = messagesElement.EnumerateArray().ToList();
+
+            // System-Prompt extrahieren
+            JsonElement? systemMessage = messages
+                .FirstOrDefault(m => m.GetProperty("role").GetString() == "system");
+
+            int systemTokens = systemMessage.HasValue
+                ? CountTokens(ExtractContent(systemMessage.Value))
+                : 0;
+
+            // Alle anderen Nachrichten
+            var chatMessages = messages
+                .Where(m => m.GetProperty("role").GetString() != "system")
+                .ToList();
+
+            int target = maxContextTokens - safetyMargin;
+
+            var finalMessages = new List<JsonElement>();
+
+            if (systemMessage.HasValue)
+                finalMessages.Add(systemMessage.Value);
+
+            int totalTokens = systemTokens;
+
+            // Von hinten nach vorne kürzen
+            for (int i = chatMessages.Count - 1; i >= 0; i--) {
+                var msg = chatMessages[i];
+                int msgTokens = CountTokens(ExtractContent(msg));
+
+                if (totalTokens + msgTokens > target)
+                    break;
+
+                finalMessages.Add(msg);
+                totalTokens += msgTokens;
+            }
+
+            finalMessages.Reverse();
+
+            // neuen Payload bauen
+            using var doc = JsonDocument.Parse(payload.GetRawText());
+            var rootObj = doc.RootElement.EnumerateObject().ToDictionary(p => p.Name, p => p.Value);
+
+            rootObj["messages"] = JsonSerializer.SerializeToElement(finalMessages);
+
+            return JsonSerializer.SerializeToElement(rootObj);
+        }
+
+        // 1) Token-Schätzung (1 Token ≈ 4 Zeichen)
+        public static int CountTokens(string text) {
+            if (string.IsNullOrEmpty(text))
+                return 0;
+
+            return (int)Math.Ceiling(text.Length / 4.0);
+        }
+
+        // 2) Content robust extrahieren (String, Array, Object)
+        public static string ExtractContent(JsonElement msg) {
+            if (!msg.TryGetProperty("content", out var content))
+                return "";
+
+            return content.ValueKind switch {
+                JsonValueKind.String => content.GetString() ?? "",
+                JsonValueKind.Array => string.Join(" ", content.EnumerateArray().Select(ExtractContentFromPart)),
+                JsonValueKind.Object => ExtractContentFromPart(content),
+                _ => ""
+            };
+        }
+
+        // 3) Einzelne Content-Parts extrahieren (für multimodale Messages)
+        public static string ExtractContentFromPart(JsonElement part) {
+            if (part.TryGetProperty("text", out var textProp))
+                return textProp.GetString() ?? "";
+
+            if (part.TryGetProperty("content", out var contentProp) &&
+                contentProp.ValueKind == JsonValueKind.String)
+                return contentProp.GetString() ?? "";
+
+            return "";
+        }
+
         public static JsonElement RemoveImages(JsonElement payload) {
             // 1) JsonElement → JsonNode (verlustfrei)
             JsonNode? node = JsonNode.Parse(payload.GetRawText());
@@ -39,7 +137,45 @@ namespace Monroe.Proxy.Helper {
             return false;
         }
 
+        public static bool IsImageRequest(JsonElement payload) {
+            if (!payload.TryGetProperty("messages", out var messages) ||
+                messages.ValueKind != JsonValueKind.Array)
+                return false;
 
+            var last = messages[messages.GetArrayLength() - 1];
+
+            if (!last.TryGetProperty("role", out var role) ||
+                role.GetString() != "user")
+                return false;
+
+            if (!last.TryGetProperty("content", out var content))
+                return false;
+
+            // Fall 1: klassischer Text
+            if (content.ValueKind == JsonValueKind.String)
+                return false;
+
+            // Fall 2: multimodal
+            // Multimodal → Array prüfen
+            if (content.ValueKind == JsonValueKind.Array) {
+                foreach (var part in content.EnumerateArray()) {
+                    // 1) Typ-basiert
+                    if (part.TryGetProperty("type", out var typeProp)) {
+                        var type = typeProp.GetString();
+                        if (type == "input_image" || type == "image_url")
+                            return true;
+                    }
+
+                    // 2) Fallback: Properties erkennen
+                    if (part.TryGetProperty("image_url", out _) ||
+                        part.TryGetProperty("image_base64", out _)) {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
         private static void RemoveImagesInNode(JsonNode node) {
             if (node is not JsonObject obj)
                 return;

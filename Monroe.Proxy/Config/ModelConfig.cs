@@ -1,17 +1,67 @@
-﻿namespace Monroe.Config;
+﻿using System.Text;
+using System.Text.Json;
+
+namespace Monroe.Config;
 
 public class ModelConfig {
-   
+    //appsettings.json properties
     public string Type { get; set; } = "";      // coder, vision, unrestricted, classifier
     public int Port { get; set; }
     public string ModelPath { get; set; } = "";
     public int ContextSize { get; set; }
-
-  
-
+    public string? RemoteHost { get; set; } // Optional, default: null
+    public int RemotePort { get; set; } // Optional, default: 0
     public RoutingRules Rules { get; set; } = new();
 
-    public string ModelName => ExtractModelName(ModelPath);
+    //public properties
+    public string? RemoteModelName { get; set; }
+
+    public string ApiUrl(string baseUrl) {
+        if (RemoteHost == null) {
+            return $"{baseUrl}:{Port}";
+        }
+         else {
+            return $"{RemoteHost}:{RemotePort}";
+        }
+    }
+    public string ModelName { get {
+            if (RemoteModelName != null) {
+                return RemoteModelName;
+            }
+            return ExtractModelName(ModelPath);
+        } }
+    
+    public async Task<string?> GetActiveRemoteModelAsync() {
+        using var client = new HttpClient();
+
+        var requestBody = new {
+            model = "ignore_this", // LM Studio ignoriert das sowieso
+            messages = new[]
+            {
+            new { role = "user", content = "ping" }
+        },
+            max_tokens = 1
+        };
+
+        var json = JsonSerializer.Serialize(requestBody);
+        var content = new StringContent(json, Encoding.UTF8, "application/json");
+
+        var response = await client.PostAsync($"{RemoteHost}:{RemotePort}/v1/chat/completions", content);
+
+        if (!response.IsSuccessStatusCode)
+            return null;
+
+        var responseJson = await response.Content.ReadAsStringAsync();
+
+        using var doc = JsonDocument.Parse(responseJson);
+        var root = doc.RootElement;
+
+        // Das ist der echte Modellname, den der Server gerade nutzt
+        if (root.TryGetProperty("model", out var modelProp))
+            return modelProp.GetString();
+
+        return null;
+    }
 
     public static string ExtractModelName(string path) {
         if (string.IsNullOrWhiteSpace(path))
@@ -62,9 +112,6 @@ public class ModelConfig {
 
 }
 
-
-
 public class RoutingRules {
     public List<string> UseFor { get; set; } = new();
-    public List<string> NeverFor { get; set; } = new();
 }

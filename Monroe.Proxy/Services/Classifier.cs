@@ -1,4 +1,5 @@
 ﻿using Monroe.Config;
+using System.Diagnostics;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
@@ -10,28 +11,38 @@ public class Classifier {
     private readonly List<ModelConfig> models;
     private readonly IConfiguration config;
 
-    public Classifier(IConfiguration config, IHttpClientFactory factory, List<ModelConfig> models) {
+    public ModelConfig Model;
+
+    public Classifier(IConfiguration config, IHttpClientFactory factory, List<ModelConfig> models, ModelConfig classiferModel) {
         http = factory.CreateClient("llama");
         this.models = models;
         this.config = config;
+
+        Model = classiferModel;
     }
 
     public async Task<ModelConfig> DecideBackendAsync(JsonElement payload) {
         // 1) User message extrahieren (robust)
-        string userMessage = ExtractUserMessage(payload);
-
+        string userMessage =  ExtractUserMessage(payload);
+        var maxlen = Model.ContextSize * 2;
+        if (userMessage.Length > maxlen) {
+            userMessage = userMessage.Substring(0, maxlen);
+        }
+        userMessage = userMessage;
         // 2) Modellliste für den Classifier bauen
         string modelList = BuildModelListForClassifier();
 
         // 3) Prompt für den Classifier
         string classifierPrompt = @$"
-You are a routing classifier.
-Return ONLY the model name from the list below.
-No explanations. No sentences. No punctuation.
-Valid model names:
+You are a User Prompt classifier.
+Choose the most suitable model for the user prompt.
+Return ONLY One model name from the list below.
+Return ONLY the most suitable one.
+Output EXACTLY one Word with the Name of the choosen Model.
+
 {modelList}
 
-User request:
+User Prompt:
 {userMessage}
 ".Trim();
 
@@ -44,11 +55,25 @@ User request:
         ) ?? models.First(m => m.Type == "coder"); // Fallback
     }
 
-
-
-
     private string ExtractModelTypes(string raw) {
         raw = raw.ToLower();
+        string[] refusalPatterns = {
+            "i can't",
+            "i cannot",
+            "i cannot help",
+            "i'm not allowed",
+            "i am not allowed",
+            "i cannot assist",
+            "i'm unable",
+            "i am unable",
+            "i cannot comply",
+            "i can't comply"
+        };
+        bool refused = refusalPatterns.Any(p =>
+            raw.Contains(p, StringComparison.OrdinalIgnoreCase)
+        );
+        if (refused)
+            return "nsfw";
 
         foreach (var m in models) {
             if (raw.Contains(m.Type.ToLower()))
@@ -96,60 +121,51 @@ User request:
 
         // 1. Modellnamen (ohne classifier)
         foreach (var m in models) {
-            sb.AppendLine(m.Type);
-        }
-
-        sb.AppendLine();
-        sb.AppendLine("Routing rules:");
-
-        // 2. Regeln pro Modell
-        foreach (var m in models) {
-            // UseFor
-            if (m.Rules.UseFor.Any()) {
-                sb.AppendLine(
-                    $"Use \"{m.Type}\" only for: {string.Join(", ", m.Rules.UseFor)}.");
-            }
-
-            // NeverFor
-            if (m.Rules.NeverFor.Any()) {
-                sb.AppendLine(
-                    $"Never use \"{m.Type}\" for: {string.Join(", ", m.Rules.NeverFor)}.");
-            }
-
+            sb.AppendLine($"Modelname: {m.Type}");
+            sb.AppendLine($"Select this model for: {string.Join(", ", m.Rules.UseFor)}.");
             sb.AppendLine();
         }
-
         return sb.ToString().Trim();
+       
     }
 
     private async Task<string> AskClassifierAsync(string prompt) {
         var request = new {
-            model = "classifier",
+            model = Path.GetFileNameWithoutExtension( Model.ModelName),
+            temperature =0,
+            top_p = 1,
+            top_k = 1,
+            max_tokens= 5,
             messages = new[]
             {
-                new { role = "system", content = "Return ONLY the model name." },
+               // new { role = "system", content = "Return ONLY the model name. Return ONLY one of the models. Return ONLY the most suitable one." },
                 new { role = "user", content = prompt }
             }
         };
 
-        var BaseUrl = config["BaseUrl"];
-        var classifierPort = config["ClassifierPort"];
+        var BaseUrl = config["BaseUrl"]!;
         var response = await http.PostAsJsonAsync(
-            $"{BaseUrl}:{classifierPort}/v1/chat/completions",
+            $"{Model.ApiUrl(BaseUrl)}/v1/chat/completions",
             request
         );
 
         var json = await response.Content.ReadFromJsonAsync<JsonElement>();
 
-        string result = json
-            .GetProperty("choices")[0]
-            .GetProperty("message")
-            .GetProperty("content")
-            .GetString()?
-            .Trim()
-            .ToLower() ?? "";
+        var debugresult = await response.Content.ReadAsStringAsync();
+        string modelname = "coder";
+        try {
+            string result = json
+                .GetProperty("choices")[0]
+                .GetProperty("message")
+                .GetProperty("content")
+                .GetString()?
+                .Trim()
+                .ToLower() ?? "";
 
-        var modelname = ExtractModelTypes(result);
+            modelname = ExtractModelTypes(result);
+        } catch (Exception ex){ 
+            Debug.WriteLine(ex.Message); 
+        }
         return modelname;
     }
 }

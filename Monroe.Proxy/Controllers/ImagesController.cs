@@ -1,5 +1,6 @@
 ﻿using Microsoft.AspNetCore.Mvc;
 using Monroe.Services;
+using System.Reflection;
 using System.Text.Json;
 
 [ApiController]
@@ -12,7 +13,7 @@ public class ImagesController(IConfiguration config, LlamaForwarder forwarder, M
         var backend = await router.RouteAsync(payload);
 
         // Images sind IMMER non-streaming im OpenAI-Standard
-        return await forwarder.ForwardAsync($"{config["BaseUrl"]}:{backend.Port}/v1/images/generations", payload);
+        return await forwarder.ForwardAsync($"{backend.ApiUrl(config["BaseUrl"]!)}/v1/images/generations", payload);
 
 
     }

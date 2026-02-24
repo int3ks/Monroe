@@ -1,14 +1,17 @@
 ﻿using Monroe.Config;
 using System.Diagnostics;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
 
 namespace Monroe.Services;
 
-public class LlamaProcessManager(List<ModelConfig> models, IConfiguration config) {
+public class LlamaProcessManager(List<ModelConfig> models,ModelConfig classifier, IConfiguration config) {
     private readonly List<Process> _processes = new();
+    int globalPortsCounter = config.GetValue<int>("ProxyPort");
 
-    public void Start() {
+    public async Task StartAsync() {
+        
         string exe = config["LlamaExecutable"]!;
         string root = config["ModelsRoot"]!;
         bool flash = config.GetValue<bool>("FlashAttention");
@@ -16,6 +19,11 @@ public class LlamaProcessManager(List<ModelConfig> models, IConfiguration config
         string cache = config["CacheType"] ?? "q8_0";
 
         foreach (var model in models) {
+            if (model.RemoteHost != null) {
+                 model.RemoteModelName = await model.GetActiveRemoteModelAsync();
+                continue;
+            }
+            model.Port = ++globalPortsCounter;
             var fullPath = Path.Combine(root, model.ModelPath);
 
             var dir = Path.GetDirectoryName(fullPath);
@@ -47,19 +55,45 @@ public class LlamaProcessManager(List<ModelConfig> models, IConfiguration config
             var psi = new ProcessStartInfo {
                 FileName = exe,
                 Arguments = string.Join(" ", args),
-                UseShellExecute = true,
-                CreateNoWindow = false
+                UseShellExecute = Debugger.IsAttached,
+                //CreateNoWindow = true
             };
 
             var proc = FindOrStartProcess(psi);
             if (proc != null) {
                 _processes.Add(proc);
                 Debug.WriteLine($"[MONROE] Started model '{model.Type}' on port {model.Port}");
+
+                RenameProcessWindow(proc, $"{model.Type.ToUpper()} -- {Path.GetFileNameWithoutExtension(model.ModelPath)}");
+
+
+
             }
+        }
+    }
+   
+
+    [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)]
+    private static extern bool SetWindowText(IntPtr hWnd, string lpString);
+
+    public static void RenameProcessWindow(Process process, string newTitle) {
+        if (process == null)
+            return;
+        Thread.Sleep(1000);
+
+        IntPtr handle = process.MainWindowHandle;
+
+        if (handle != IntPtr.Zero) {
+            SetWindowText(handle, newTitle);
         }
     }
 
     public void StartClassifier() {
+
+        if (classifier.RemoteHost != null) {
+            return;
+        }
+
         string exe = config["LlamaExecutable"]!;
         string root = config["ModelsRoot"]!;
 
@@ -67,15 +101,15 @@ public class LlamaProcessManager(List<ModelConfig> models, IConfiguration config
         bool noMmap = config.GetValue<bool>("NoMmap");
         string cache = config["CacheType"] ?? "q8_0";
 
-
-        var fullPath = Path.Combine(root, config["ClassifierModel"]!);
+        classifier.Port = ++globalPortsCounter;
+        var fullPath = Path.Combine(root, classifier.ModelPath);
 
         var args = new List<string>
         {
                 $"--host 0.0.0.0",
-                $"--port {config["ClassifierPort"]!}",
+                $"--port {classifier.Port}",
                 $"--model \"{fullPath}\"",
-                $"-c {config["ClassifierContextSize"]!}",
+                $"-c {classifier.ContextSize}",
                 $"--cache-type-k {cache} --cache-type-v {cache}",
                 $"--context-shift"
             };
@@ -91,14 +125,15 @@ public class LlamaProcessManager(List<ModelConfig> models, IConfiguration config
         var psi = new ProcessStartInfo {
             FileName = exe,
             Arguments = string.Join(" ", args),
-            UseShellExecute = true,
-            CreateNoWindow = false
+            UseShellExecute = Debugger.IsAttached,
+            //CreateNoWindow = false
         };
 
         var proc = FindOrStartProcess(psi);
         if (proc != null) {
             _processes.Add(proc);
-            Debug.WriteLine($"[MONROE] Started classifier '{config["ClassifierModel"]!}' on port {config["ClassifierPort"]!}");
+            Debug.WriteLine($"[MONROE] Started classifier '{classifier.ModelName}' on port {classifier.Port}");
+            RenameProcessWindow(proc, "CLASSIFIER -- " + classifier.ModelName);
         }
 
     }

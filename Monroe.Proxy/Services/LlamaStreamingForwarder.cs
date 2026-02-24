@@ -9,7 +9,6 @@ public class LlamaStreamingForwarder {
     public LlamaStreamingForwarder(IHttpClientFactory factory) {
         _factory = factory;
     }
-
     public async Task StreamAsync(HttpContext context, string path, JsonElement payload, string routedModel) {
         var client = _factory.CreateClient("backend");
 
@@ -28,56 +27,66 @@ public class LlamaStreamingForwarder {
         using var reader = new StreamReader(backendStream);
         await using var writer = new StreamWriter(context.Response.Body);
 
-        string? lastContentChunk = null;
+        string? lastJsonChunk = null;
 
-        // 🔥 1. Backend-Chunks 1:1 weiterleiten, aber letztes content-Chunk merken
+        // 🔥 1. Backend-Chunks 1:1 weiterleiten, aber letztes JSON-Chunk merken
         while (!reader.EndOfStream) {
             var line = await reader.ReadLineAsync();
+            if (line is null)
+                continue;
 
-            if (line is not null) {
-                // Nur Zeilen merken, die JSON enthalten
-                if (line.StartsWith("data: {"))
-                    lastContentChunk = line;
+            if (line.StartsWith("data: {"))
+                lastJsonChunk = line;
 
-                await writer.WriteLineAsync(line);
-                await writer.FlushAsync();
-            }
+            await writer.WriteLineAsync(line);
+            await writer.FlushAsync();
         }
 
-        // 🔥 2. Zusatz in das letzte content-Chunk injizieren (statt eigenes Event)
-        if (lastContentChunk != null) {
-            var text = $"\n\n---\nRouted model: {routedModel}";
-
-            // JSON extrahieren
-            var json = lastContentChunk.Substring("data: ".Length);
+        // 🔥 2. Jetzt erweitern wir das letzte Chunk um routed_model
+        if (lastJsonChunk != null) {
+            var json = lastJsonChunk.Substring("data: ".Length);
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
 
-            // existierenden content holen
-            var delta = root.GetProperty("choices")[0].GetProperty("delta");
-            var existing = delta.TryGetProperty("content", out var c)
-                ? c.GetString() ?? ""
-                : "";
+            // Prüfen, ob Timings existieren
+            JsonElement timings;
+            bool hasTimings = root.TryGetProperty("timings", out timings);
 
-            // neuen content bauen
-            var merged = existing + text;
+            Dictionary<string, object> newTimings = new();
 
-            var newJson = JsonSerializer.Serialize(new {
+            if (hasTimings) {
+                // existierende Timings übernehmen
+                foreach (var p in timings.EnumerateObject())
+                    newTimings[p.Name] = p.Value.ValueKind switch {
+                        JsonValueKind.Number => p.Value.GetDouble(),
+                        JsonValueKind.String => p.Value.GetString()!,
+                        _ => p.Value.ToString()!
+                    };
+            }
+
+            // 🔥 Routed Model hinzufügen
+            newTimings["routed_model"] = routedModel;
+
+            // Neues finales Chunk bauen
+            var finalChunk = new {
                 choices = new[]
                 {
-                    new
-                    {
-                        delta = new
-                        {
-                            role = "tool",
-                            content = $"Routed model: {routedModel}"
-                        }
-                    }
+                new
+                {
+                    index = 0,
+                    finish_reason = "stop",
+                    delta = new { }
                 }
-            });
+            },
+                created = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                id = root.TryGetProperty("id", out var idProp) ? idProp.GetString() : "monroe-final",
+                model = root.TryGetProperty("model", out var modelProp) ? modelProp.GetString() : routedModel,
+                system_fingerprint = "monroe-router",
+                @object = "chat.completion.chunk",
+                timings = newTimings
+            };
 
-            // neuen finalen Chunk senden
-            await writer.WriteLineAsync($"data: {newJson}");
+            await writer.WriteLineAsync("data: " + JsonSerializer.Serialize(finalChunk));
             await writer.WriteLineAsync();
             await writer.FlushAsync();
         }
@@ -87,4 +96,5 @@ public class LlamaStreamingForwarder {
         await writer.WriteLineAsync();
         await writer.FlushAsync();
     }
+    
 }

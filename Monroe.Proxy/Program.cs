@@ -23,17 +23,19 @@ builder.Services.AddSingleton<ModelRouter>();
 var models = builder.Configuration
     .GetSection("Models")
     .Get<List<ModelConfig>>() ?? [];
-
 builder.Services.AddSingleton(models);
 
+var classiferModel = builder.Configuration
+    .GetSection("ClassifierModel")
+    .Get<ModelConfig>();
+builder.Services.AddSingleton(classiferModel);
 
 var app = builder.Build();
 
 // Start llama.cpp automatically
 var llama = app.Services.GetRequiredService<LlamaProcessManager>();
-llama.Start();
+llama.StartAsync();
 llama.StartClassifier();
-
 
 app.MapControllers();
 
