@@ -5,13 +5,8 @@ using System.Text.Json;
 
 [ApiController]
 [Route("v1")]
-public class CompletionsController(IConfiguration config,
-        LlamaForwarder forwarder,
-        LlamaStreamingForwarder streamer,
-        ModelRouter router) : ControllerBase {
+public class CompletionsController(IConfiguration config, LlamaForwarder forwarder, LlamaStreamingForwarder streamer, ModelRouter router) : ControllerBase {
    
-
-
     [HttpPost("completions")]
     public async Task<IActionResult> Completions([FromBody] JsonElement payload) {
         

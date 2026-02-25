@@ -5,7 +5,7 @@ namespace Monroe.Config;
 
 public class ModelConfig {
     //appsettings.json properties
-    public string Type { get; set; } = "";      // coder, vision, unrestricted, classifier
+    public string Type { get; set; } = "";  
     public int Port { get; set; }
     public string ModelPath { get; set; } = "";
     public int ContextSize { get; set; }
@@ -35,7 +35,7 @@ public class ModelConfig {
         using var client = new HttpClient();
 
         var requestBody = new {
-            model = "ignore_this", // LM Studio ignoriert das sowieso
+            model = "ignore_this", 
             messages = new[]
             {
             new { role = "user", content = "ping" }

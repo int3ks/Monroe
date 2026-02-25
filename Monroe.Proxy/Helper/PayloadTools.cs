@@ -73,7 +73,7 @@ namespace Monroe.Proxy.Helper {
             if (string.IsNullOrEmpty(text))
                 return 0;
 
-            return (int)Math.Ceiling(text.Length / 4.0);
+            return (int)Math.Ceiling(text.Length / 3.0);
         }
 
         // 2) Content robust extrahieren (String, Array, Object)

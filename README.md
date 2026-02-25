@@ -1,4 +1,4 @@
-# MONROE – Modular Orchestrator & Router Engine
+# MONROE – Model Orchestration & Router Engine
 
 MONROE is a transparent, modular multi‑agent orchestrator that exposes multiple local or remote AI models through a single OpenAI‑compatible API.  
 Its purpose is to provide predictable routing, full transparency, and strict control over how different models are used — without relying on hidden heuristics or black‑box behavior.

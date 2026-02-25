@@ -23,12 +23,13 @@ public class Classifier {
 
     public async Task<ModelConfig> DecideBackendAsync(JsonElement payload) {
         // 1) User message extrahieren (robust)
-        string userMessage =  ExtractUserMessage(payload);
-        var maxlen = Model.ContextSize * 2;
+        string userMessage = ExtractUserMessage(payload);
+        var maxlen = 500;// Model.ContextSize * 3;
         if (userMessage.Length > maxlen) {
-            userMessage = userMessage.Substring(0, maxlen);
+            var start = userMessage.Length - maxlen;
+            userMessage = userMessage.Substring(start);
         }
-        userMessage = userMessage;
+
         // 2) Modellliste für den Classifier bauen
         string modelList = BuildModelListForClassifier();
 
@@ -47,13 +48,49 @@ User Prompt:
 ".Trim();
 
         // 4) Classifier-Modell befragen
-        string chosenName = await AskClassifierAsync(classifierPrompt);
+        var request = new {
+            model = Path.GetFileNameWithoutExtension(Model.ModelName),
+            temperature = 0,
+            top_p = 1,
+            top_k = 1,
+            max_tokens = 5,
+            messages = new[]
+            {
+                new { role = "user", content = classifierPrompt }
+            }
+        };
+
+        var BaseUrl = config["BaseUrl"]!;
+        var response = await http.PostAsJsonAsync(
+            $"{Model.ApiUrl(BaseUrl)}/v1/chat/completions",
+            request
+        );
+
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+
+        var debugresult = await response.Content.ReadAsStringAsync();
+        string modelname = "coder";
+        try {
+            string result = json
+                .GetProperty("choices")[0]
+                .GetProperty("message")
+                .GetProperty("content")
+                .GetString()?
+                .Trim()
+                .ToLower() ?? "";
+
+            modelname = ExtractModelTypes(result);
+        } catch (Exception ex) {
+            Debug.WriteLine(ex.Message);
+        }
 
         // 5) Passendes ModelConfig zurückgeben
         return models.FirstOrDefault(m =>
-            m.Type.Equals(chosenName, StringComparison.OrdinalIgnoreCase)
+            m.Type.Equals(modelname, StringComparison.OrdinalIgnoreCase)
         ) ?? models.First(m => m.Type == "coder"); // Fallback
     }
+
+
 
     private string ExtractModelTypes(string raw) {
         raw = raw.ToLower();
@@ -126,46 +163,8 @@ User Prompt:
             sb.AppendLine();
         }
         return sb.ToString().Trim();
-       
+
     }
 
-    private async Task<string> AskClassifierAsync(string prompt) {
-        var request = new {
-            model = Path.GetFileNameWithoutExtension( Model.ModelName),
-            temperature =0,
-            top_p = 1,
-            top_k = 1,
-            max_tokens= 5,
-            messages = new[]
-            {
-               // new { role = "system", content = "Return ONLY the model name. Return ONLY one of the models. Return ONLY the most suitable one." },
-                new { role = "user", content = prompt }
-            }
-        };
 
-        var BaseUrl = config["BaseUrl"]!;
-        var response = await http.PostAsJsonAsync(
-            $"{Model.ApiUrl(BaseUrl)}/v1/chat/completions",
-            request
-        );
-
-        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
-
-        var debugresult = await response.Content.ReadAsStringAsync();
-        string modelname = "coder";
-        try {
-            string result = json
-                .GetProperty("choices")[0]
-                .GetProperty("message")
-                .GetProperty("content")
-                .GetString()?
-                .Trim()
-                .ToLower() ?? "";
-
-            modelname = ExtractModelTypes(result);
-        } catch (Exception ex){ 
-            Debug.WriteLine(ex.Message); 
-        }
-        return modelname;
-    }
 }

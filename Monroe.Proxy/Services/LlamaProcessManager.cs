@@ -20,7 +20,7 @@ public class LlamaProcessManager(List<ModelConfig> models,ModelConfig classifier
 
         foreach (var model in models) {
             if (model.RemoteHost != null) {
-                 model.RemoteModelName = await model.GetActiveRemoteModelAsync();
+                model.RemoteModelName = await model.GetActiveRemoteModelAsync();
                 continue;
             }
             model.Port = ++globalPortsCounter;
@@ -49,6 +49,8 @@ public class LlamaProcessManager(List<ModelConfig> models,ModelConfig classifier
 
             if (noMmap)
                 args.Add("--no-mmap");
+
+            //args.Add("--direct-io");
 
             //args.Add("--embedding");
 
